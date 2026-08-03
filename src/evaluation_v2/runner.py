@@ -22,8 +22,24 @@ from .pipeline_adapter import LivePipelineAdapter
 from .schemas import BenchmarkExample, ExampleResult
 
 
-def _refs(records: Iterable[dict[str, Any]]) -> list[str]:
-    return list(dict.fromkeys(record.get("verse_ref", "") for record in records if record.get("verse_ref")))
+def _refs(records: Iterable[dict[str, Any]], *, verse_only: bool = True) -> list[str]:
+    """Extract ranked verse refs; optionally keep only chunk_type=verse.
+
+    Records without ``chunk_type`` are kept when ``verse_only`` is True so
+    short-circuit / partially enriched candidates still score. Explicit non-
+    verse types (commentary, pada, combined) are dropped.
+    """
+    refs: list[str] = []
+    for record in records:
+        ref = record.get("verse_ref", "")
+        if not ref:
+            continue
+        chunk_type = record.get("chunk_type")
+        if verse_only and chunk_type not in (None, "", "verse"):
+            continue
+        if ref not in refs:
+            refs.append(ref)
+    return refs
 
 
 def stage_analysis(example: BenchmarkExample, result: dict[str, Any], final_refs: list[str]) -> dict[str, Any]:
@@ -34,7 +50,13 @@ def stage_analysis(example: BenchmarkExample, result: dict[str, Any], final_refs
     containment = {name: bool(gold.intersection(refs)) for name, refs in stage_refs.items()}
     exact_short_circuit = bool(result.get("intermediate", {}).get("verse_ref_detected", False))
     if exact_short_circuit:
-        failure = "exact_reference_short_circuit"
+        if gold and gold.intersection(final_refs):
+            failure = "success"
+        elif not gold:
+            # Invalid-reference probes: short-circuit without gold is a false positive.
+            failure = "exact_reference_false_positive"
+        else:
+            failure = "exact_reference_short_circuit_miss"
     elif not gold:
         failure = "not_applicable"
     elif not any(containment.get(name, False) for name in ("vector_results", "graph_results", "bm25_results")):
@@ -47,7 +69,13 @@ def stage_analysis(example: BenchmarkExample, result: dict[str, Any], final_refs
         failure = "final_formatting_or_mapping_failure"
     else:
         failure = "success"
-    return {"stage_refs": stage_refs, "containment": containment, "union_pool_containment": bool(gold.intersection(set().union(*(set(value) for value in stage_refs.values())))), "failure_class": failure, "exact_reference_short_circuit": exact_short_circuit}
+    return {
+        "stage_refs": stage_refs,
+        "containment": containment,
+        "union_pool_containment": bool(gold.intersection(set().union(*(set(value) for value in stage_refs.values())))),
+        "failure_class": failure,
+        "exact_reference_short_circuit": exact_short_circuit,
+    }
 
 
 def run_retrieval(
@@ -64,10 +92,30 @@ def run_retrieval(
             retrieved_refs = _refs(retrieved_records)
             metrics = retrieval_metrics(retrieved_refs, example.gold_verse_refs, graded_relevance=example.graded_relevance, cutoffs=config.get("retrieval", {}).get("cutoffs", [1, 3, 5, 10, 50]))
             stage = stage_analysis(example, result, retrieved_refs)
-            row = {"example_id": example.example_id, "dataset_name": example.dataset_name, "track": example.track, "query": example.query, "query_language": example.query_language, "query_type": example.query_type, "gold_verse_refs": list(example.gold_verse_refs), "retrieved_refs": retrieved_refs, "retrieved_records": retrieved_records[:50], "metrics": metrics, "stages": stage, "latency": {"total": observation.elapsed_seconds, "retrieval": observation.elapsed_seconds}, "health": observation.health, "expected_valid": example.metadata.get("expected_valid", True), "parsed_refs": parse_reference_query(example.query), "predicted_refs": retrieved_refs}
+            row = {
+                "example_id": example.example_id,
+                "dataset_name": example.dataset_name,
+                "track": example.track,
+                "query": example.query,
+                "query_language": example.query_language,
+                "query_type": example.query_type,
+                "gold_verse_refs": list(example.gold_verse_refs),
+                "retrieved_refs": retrieved_refs,
+                "retrieved_records": retrieved_records[:50],
+                "metrics": metrics,
+                "stages": stage,
+                "latency": {"total": observation.elapsed_seconds, "retrieval": observation.elapsed_seconds},
+                "health": observation.health,
+                "expected_valid": example.metadata.get("expected_valid", True),
+                "parsed_refs": parse_reference_query(example.query),
+                "predicted_refs": retrieved_refs,
+                "exact_reference_short_circuit": stage["exact_reference_short_circuit"],
+            }
             if with_id:
                 row["routing_latency_seconds"] = observation.elapsed_seconds
                 row["expected_refs"] = list(example.gold_verse_refs)
+                if retrieved_refs and set(retrieved_refs) != set(example.gold_verse_refs):
+                    row["incorrect_chapter_or_verse"] = True
             health.append(observation.health)
         except Exception as exc:  # per-example errors are retained, never hidden
             row = {"example_id": example.example_id, "dataset_name": example.dataset_name, "track": example.track, "query": example.query, "gold_verse_refs": list(example.gold_verse_refs), "retrieved_refs": [], "metrics": {"excluded": True, "failure": "execution_error"}, "stages": {"failure_class": "execution_error"}, "latency": {"total": time.perf_counter() - start}, "error": f"{type(exc).__name__}: {exc}", "degraded": True, "expected_valid": example.metadata.get("expected_valid", True), "predicted_refs": []}

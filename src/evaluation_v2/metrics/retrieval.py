@@ -7,6 +7,15 @@ from collections import defaultdict
 from typing import Any, Iterable
 
 
+# Rate / containment fields that are safe to macro-average. Counts and rank
+# positions are reported separately so they are not mistaken for percentages.
+_SUMMARY_RATE_KEYS = {
+    "mrr",
+    "candidate_pool_containment",
+}
+_SUMMARY_RATE_PREFIXES = ("recall@", "precision@", "graded_recall@", "ndcg@")
+
+
 def _unique(values: Iterable[str]) -> list[str]:
     return list(dict.fromkeys(value for value in values if value))
 
@@ -15,6 +24,12 @@ def _labels(gold: Iterable[str], graded: dict[str, int] | None) -> dict[str, int
     if graded:
         return {key: int(value) for key, value in graded.items() if value > 0}
     return {key: 1 for key in gold if key}
+
+
+def _is_rate_metric(name: str) -> bool:
+    if name in _SUMMARY_RATE_KEYS:
+        return True
+    return any(name.startswith(prefix) for prefix in _SUMMARY_RATE_PREFIXES)
 
 
 def retrieval_metrics(
@@ -29,11 +44,12 @@ def retrieval_metrics(
         top = ranked[:k]
         hits = [item for item in top if item in relevant]
         result[f"recall@{k}"] = len(set(hits)) / len(relevant) if relevant else None
-        result[f"precision@{k}"] = len(set(hits)) / len(set(top)) if top else 0.0
+        result[f"precision@{k}"] = len(set(hits)) / k if k > 0 else 0.0
         result[f"graded_recall@{k}"] = sum(labels[item] for item in set(hits)) / sum(labels.values()) if labels else None
     first_rank = next((index for index, item in enumerate(ranked, 1) if item in relevant), None)
     result["mrr"] = 1.0 / first_rank if first_rank else 0.0
     result["first_relevant_rank"] = first_rank
+    result["top1_hit"] = bool(first_rank == 1)
     ranks = [index for index, item in enumerate(ranked, 1) if item in relevant]
     result["mean_rank"] = sum(ranks) / len(ranks) if ranks else None
     result["median_rank"] = sorted(ranks)[len(ranks) // 2] if ranks else None
@@ -49,11 +65,27 @@ def retrieval_metrics(
 
 def summarize_retrieval(rows: list[dict[str, Any]], *, group_fields: tuple[str, ...] = ()) -> dict[str, Any]:
     valid = [row for row in rows if not row.get("metrics", {}).get("excluded") and row.get("metrics")]
-    summary: dict[str, Any] = {"n": len(rows), "n_scored": len(valid), "n_excluded": len(rows) - len(valid), "metrics": {}}
-    names = sorted({key for row in valid for key in row["metrics"] if isinstance(row["metrics"].get(key), (int, float))})
-    for name in names:
-        values = [row["metrics"][name] for row in valid if isinstance(row["metrics"].get(name), (int, float))]
+    summary: dict[str, Any] = {"n": len(rows), "n_scored": len(valid), "n_excluded": len(rows) - len(valid), "metrics": {}, "rank_stats": {}}
+    for name in sorted({key for row in valid for key in row["metrics"] if _is_rate_metric(key)}):
+        if name == "candidate_pool_containment":
+            values = [1.0 if row["metrics"].get(name) else 0.0 for row in valid if name in row["metrics"]]
+        else:
+            values = [
+                float(row["metrics"][name])
+                for row in valid
+                if isinstance(row["metrics"].get(name), (int, float)) and not isinstance(row["metrics"].get(name), bool)
+            ]
         summary["metrics"][name] = {"value": sum(values) / len(values) if values else None, "denominator": len(values)}
+    for name in ("first_relevant_rank", "mean_rank", "median_rank", "n_gold", "n_retrieved"):
+        values = [
+            float(row["metrics"][name])
+            for row in valid
+            if isinstance(row["metrics"].get(name), (int, float)) and not isinstance(row["metrics"].get(name), bool)
+        ]
+        summary["rank_stats"][name] = {"value": sum(values) / len(values) if values else None, "denominator": len(values)}
+    top1 = [1.0 if row["metrics"].get("top1_hit") else 0.0 for row in valid if "top1_hit" in row["metrics"]]
+    if top1:
+        summary["metrics"]["top1_hit_rate"] = {"value": sum(top1) / len(top1), "denominator": len(top1)}
     if group_fields:
         grouped: dict[tuple[str, ...], list[dict[str, Any]]] = defaultdict(list)
         for row in rows:

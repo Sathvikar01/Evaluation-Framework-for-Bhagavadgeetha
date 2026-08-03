@@ -135,10 +135,11 @@ def audit_examples(
         # hard-negative corpus is intentionally excluded from the expensive
         # fuzzy index; its exact records remain auditable without a multi-
         # minute tokenisation pass.
+        path_posix = path.replace("\\", "/")
         fuzzy_eligible = (
-            "chunks.jsonl" in path
-            or "data\\evaluation\\external" in path
-            or "training_pairs_v2" in path
+            "chunks.jsonl" in path_posix
+            or "data/evaluation/external" in path_posix
+            or "training_pairs_v2" in path_posix
         )
         if fuzzy_eligible:
             token_sources.append((path, _tokens(text), text, kind))

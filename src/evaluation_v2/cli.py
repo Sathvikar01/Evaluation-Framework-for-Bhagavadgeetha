@@ -86,24 +86,66 @@ def _load_examples(config: dict, names: list[str], split: str, max_examples: int
 def cmd_leakage(args: argparse.Namespace) -> int:
     config = _config(args)
     examples = []
+    train_examples = []
     names = args.datasets or ["bhagavad_gita_qa"]
     for name in names:
-        try: examples.extend(_load_examples(config, [name], "test", None))
-        except FileNotFoundError: continue
-    report = audit_examples([row.to_dict(include_raw=False) for row in examples], repo_root=".", thresholds=config.get("leakage"))
+        try:
+            examples.extend(_load_examples(config, [name], "test", None))
+            if name not in {"with_id"} and not str(name).startswith("quick_"):
+                train_examples.extend(_load_examples(config, [name], "train", None))
+        except FileNotFoundError:
+            continue
+    report = audit_examples(
+        [row.to_dict(include_raw=False) for row in examples],
+        repo_root=".",
+        thresholds=config.get("leakage"),
+        train_examples=[row.to_dict(include_raw=False) for row in train_examples],
+        test_examples=[row.to_dict(include_raw=False) for row in examples],
+    )
     write_leakage_report(report, Path(config["paths"]["results_root"]))
     print(json.dumps({key: report.get(key) for key in ("status", "official", "sources_scanned", "finding_count", "definite_count")}, ensure_ascii=False, indent=2)); return 0 if report["official"] or args.allow_contaminated else 2
 
 
+def _default_datasets_for_track(track: str) -> list[str]:
+    return {
+        "with_id": ["with_id"],
+        "without_id_gita_qa": ["bhagavad_gita_qa"],
+        "cross_lingual_gita": ["gitadb"],
+        "external_generalization": ["anveshana"],
+        "generation": ["edwin_arnold"],
+    }.get(track, ["bhagavad_gita_qa"])
+
+
+def _audit_with_split_policy(config: dict, names: list[str], test_examples: list) -> dict:
+    """Audit test examples and enforce same-verse train/test overlap when available."""
+    train_rows: list[dict] = []
+    for name in names:
+        if name.startswith("quick_") or name == "with_id":
+            continue
+        try:
+            adapter = build_adapter(name, config)
+            if hasattr(adapter, "load"):
+                train_rows.extend(row.to_dict(include_raw=False) for row in adapter.load(split="train", max_examples=None))
+        except (FileNotFoundError, ValueError, KeyError):
+            continue
+    return audit_examples(
+        [row.to_dict(include_raw=False) for row in test_examples],
+        repo_root=".",
+        thresholds=config.get("leakage"),
+        train_examples=train_rows,
+        test_examples=[row.to_dict(include_raw=False) for row in test_examples],
+    )
+
+
 def _run(args: argparse.Namespace, track: str) -> int:
     config = _config(args)
-    names = _dataset_names(args, ["with_id"] if track == "with_id" else ["bhagavad_gita_qa"])
+    names = _dataset_names(args, _default_datasets_for_track(track))
     examples = _load_examples(config, names, "test", args.max_examples)
     if not examples: raise SystemExit("no examples available; run prepare-data or configure a local dataset")
-    audit = audit_examples([row.to_dict(include_raw=False) for row in examples], repo_root=".", thresholds=config.get("leakage"))
+    audit = _audit_with_split_policy(config, names, examples)
     if audit["definite_count"] and not args.allow_contaminated:
         raise SystemExit("official run blocked by definite leakage; use --allow-contaminated only for a visibly diagnostic run")
-    adapter = LivePipelineAdapter().build()
+    adapter = LivePipelineAdapter(rebuild_indices=bool(getattr(args, "rebuild_indices", False))).build()
     try:
         if track == "generation":
             rows, details = run_generation(examples, adapter, config={**config, "generation": {**config.get("generation", {}), "allow_api": args.allow_api}})
@@ -136,7 +178,7 @@ def cmd_quick(args: argparse.Namespace) -> int:
     audit = audit_examples([row.to_dict(include_raw=False) for row in examples], repo_root=".", thresholds=config.get("leakage"))
     if audit["definite_count"] and not args.allow_contaminated:
         raise SystemExit("quick diagnostic blocked by definite leakage; use --allow-contaminated only for diagnosis")
-    adapter = LivePipelineAdapter().build()
+    adapter = LivePipelineAdapter(rebuild_indices=bool(getattr(args, "rebuild_indices", False))).build()
     try:
         rows, details = run_retrieval(examples, adapter, config=config, with_id=track == "with_id")
     finally:
@@ -160,10 +202,10 @@ def cmd_all(args: argparse.Namespace) -> int:
         try:
             examples = _load_examples(config, names, "test", args.max_examples)
             if not examples: continue
-            audit = audit_examples([row.to_dict(include_raw=False) for row in examples], repo_root=".", thresholds=config.get("leakage"))
+            audit = _audit_with_split_policy(config, names, examples)
             audits.append(audit)
             if audit["definite_count"] and not args.allow_contaminated: raise RuntimeError(f"{track}: leakage gate failed")
-            adapter = LivePipelineAdapter().build()
+            adapter = LivePipelineAdapter(rebuild_indices=bool(getattr(args, "rebuild_indices", False))).build()
             try: rows, details = run_retrieval(examples, adapter, config=config, with_id=track == "with_id")
             finally: adapter.close()
             tracks[track] = details; all_rows.extend(rows); health[track] = details.get("component_health", {})
@@ -198,9 +240,9 @@ def build_parser() -> argparse.ArgumentParser:
     q_audit = sub.add_parser("audit-questions"); q_audit.add_argument("path", default="data/evaluation_v2/bhagavad_gita_qa/english_source.jsonl", nargs="?"); q_audit.add_argument("--output"); q_audit.set_defaults(func=cmd_audit_questions)
     leak = sub.add_parser("leakage-audit"); leak.add_argument("--config", default=argparse.SUPPRESS); leak.add_argument("--datasets", nargs="*"); leak.add_argument("--allow-contaminated", action="store_true"); leak.set_defaults(func=cmd_leakage)
     for name, track in (("with-id", "with_id"), ("without-id", "without_id_gita_qa"), ("external", "external_generalization"), ("generation", "generation")):
-        cmd = sub.add_parser(name); cmd.add_argument("--config", default=argparse.SUPPRESS); cmd.add_argument("--datasets", nargs="*"); cmd.add_argument("--max-examples", type=int); cmd.add_argument("--output"); cmd.add_argument("--allow-contaminated", action="store_true"); cmd.add_argument("--allow-api", action="store_true"); cmd.set_defaults(func=lambda args, track=track: _run(args, track))
-    all_cmd = sub.add_parser("all"); all_cmd.add_argument("--config", default=argparse.SUPPRESS); all_cmd.add_argument("--output-dir"); all_cmd.add_argument("--max-examples", type=int); all_cmd.add_argument("--allow-contaminated", action="store_true"); all_cmd.add_argument("--skip-missing-datasets", action="store_true"); all_cmd.set_defaults(func=cmd_all)
-    quick_cmd = sub.add_parser("quick"); quick_cmd.add_argument("--config", default=argparse.SUPPRESS); quick_cmd.add_argument("--track", choices=("with_id", "without_id_gita_qa"), default="without_id_gita_qa"); quick_cmd.add_argument("--max-examples", type=int); quick_cmd.add_argument("--output"); quick_cmd.add_argument("--allow-contaminated", action="store_true"); quick_cmd.set_defaults(func=cmd_quick)
+        cmd = sub.add_parser(name); cmd.add_argument("--config", default=argparse.SUPPRESS); cmd.add_argument("--datasets", nargs="*"); cmd.add_argument("--max-examples", type=int); cmd.add_argument("--output"); cmd.add_argument("--allow-contaminated", action="store_true"); cmd.add_argument("--allow-api", action="store_true"); cmd.add_argument("--rebuild-indices", action="store_true", help="Rebuild FAISS/BM25 during adapter build (default: load existing only)"); cmd.set_defaults(func=lambda args, track=track: _run(args, track))
+    all_cmd = sub.add_parser("all"); all_cmd.add_argument("--config", default=argparse.SUPPRESS); all_cmd.add_argument("--output-dir"); all_cmd.add_argument("--max-examples", type=int); all_cmd.add_argument("--allow-contaminated", action="store_true"); all_cmd.add_argument("--skip-missing-datasets", action="store_true"); all_cmd.add_argument("--rebuild-indices", action="store_true"); all_cmd.set_defaults(func=cmd_all)
+    quick_cmd = sub.add_parser("quick"); quick_cmd.add_argument("--config", default=argparse.SUPPRESS); quick_cmd.add_argument("--track", choices=("with_id", "without_id_gita_qa"), default="without_id_gita_qa"); quick_cmd.add_argument("--max-examples", type=int); quick_cmd.add_argument("--output"); quick_cmd.add_argument("--allow-contaminated", action="store_true"); quick_cmd.add_argument("--rebuild-indices", action="store_true"); quick_cmd.set_defaults(func=cmd_quick)
     comp = sub.add_parser("compare"); comp.add_argument("--config", default=argparse.SUPPRESS); comp.add_argument("a"); comp.add_argument("b"); comp.add_argument("--seed", type=int, default=20260803); comp.add_argument("--repetitions", type=int, default=2000); comp.set_defaults(func=cmd_compare)
     return parser
 
