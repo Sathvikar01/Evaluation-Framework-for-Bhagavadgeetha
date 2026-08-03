@@ -1,0 +1,22 @@
+# Optional overrides for the framework defaults in src/evaluation_v2/config.py.
+# Keep this file repository-relative so runs are reproducible from the project root.
+
+schema_version: evaluation_v2.1
+mode: diagnostic
+seed: 20260803
+
+paths:
+  evaluation_root: data/evaluation_v2
+  results_root: results/evaluation_v2
+  quick_root: data/evaluation_v2/quick
+
+retrieval:
+  cutoffs: [1, 3, 5, 10, 50]
+  use_api: false
+
+generation:
+  enabled: false
+
+judge:
+  enabled: false
+

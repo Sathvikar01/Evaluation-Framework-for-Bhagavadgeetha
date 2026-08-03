@@ -1,0 +1,21 @@
+{
+  "dataset": "bhagavad_gita_qa",
+  "source_url": "https://huggingface.co/datasets/JDhruv14/Bhagavad-Gita-QA",
+  "license": "MIT (upstream dataset card)",
+  "retrieved_utc": "2026-08-03T08:36:30.928015+00:00",
+  "raw_dir": "data\\evaluation_v2\\raw\\bhagavad_gita_qa",
+  "raw_sha256": {
+    "english.csv": "0503bbb3940502ac3a7f60102b818981fa8166bea71b6255dbb897875ec3259e",
+    "hindi.csv": "331210ee7c9121fc2f8bd514c6a2920e864467fc512bb0deca318d6e1b84226f",
+    "gujarati.csv": "64fef9223f11fd673635a4dff32ad9f3d5f4f328734be99422e5a83ad61ee554"
+  },
+  "normalized_path": "data\\evaluation_v2\\bhagavad_gita_qa\\english_source.jsonl",
+  "all_languages_normalized_path": "data\\evaluation_v2\\bhagavad_gita_qa\\source.jsonl",
+  "english_normalized_path": "data\\evaluation_v2\\bhagavad_gita_qa\\english_source.jsonl",
+  "clean_normalized_path": "data\\evaluation_v2\\bhagavad_gita_qa\\clean_source.jsonl",
+  "english_leakage_status": {
+    "status": "known_contaminated",
+    "reason": "exact contamination with legacy hf_gita_qa material embedded in the production index"
+  },
+  "official_license_clearance": true
+}

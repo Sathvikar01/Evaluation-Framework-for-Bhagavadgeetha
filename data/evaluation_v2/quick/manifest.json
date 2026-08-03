@@ -1,0 +1,43 @@
+{
+  "schema_version": "evaluation_v2.1",
+  "quick_version": "balanced-v1",
+  "seed": 20260803,
+  "status": "balanced_diagnostic",
+  "official_release_score": false,
+  "source_paths": {
+    "qa": "data\\evaluation_v2\\bhagavad_gita_qa\\english_source.jsonl",
+    "chunks": "data/processed/chunks.jsonl"
+  },
+  "source_sha256": {
+    "qa": "19fa281c4f8636a4a334cd5ce33527b8c063d96bbd2476b0908568037a81cd10",
+    "chunks": "83c2853a3e0409a38b3fc0f0118cc4cf2295660447aa5624fc7667029e5624d1"
+  },
+  "tracks": {
+    "without_id_gita_qa": {
+      "path": "data\\evaluation_v2\\quick\\bhagavad_gita_qa.jsonl",
+      "source_records": 3501,
+      "selected_examples": 701,
+      "covered_verses": 701,
+      "canonical_verses": 701,
+      "missing_from_source": [],
+      "questions_per_covered_verse": [
+        1
+      ],
+      "language_counts": {
+        "en": 701
+      },
+      "equal_questions_per_verse": true
+    },
+    "with_id": {
+      "path": "data\\evaluation_v2\\quick\\with_id.jsonl",
+      "selected_examples": 701,
+      "covered_verses": 701,
+      "canonical_verses": 701,
+      "questions_per_verse": [
+        1
+      ],
+      "missing_from_inventory": [],
+      "equal_questions_per_verse": true
+    }
+  }
+}
