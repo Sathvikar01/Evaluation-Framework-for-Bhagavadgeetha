@@ -1,0 +1,219 @@
+{
+  "path": "data/evaluation_v2/bhagavad_gita_qa/english_source.jsonl",
+  "rows": 3501,
+  "questions": 3501,
+  "verses": 701,
+  "questions_per_verse": {
+    "5": 700,
+    "1": 1
+  },
+  "unique_questions_per_verse": {
+    "5": 700,
+    "1": 1
+  },
+  "duplicate_question_count": 1,
+  "explicit_reference_question_count": 1111,
+  "explicit_reference_fraction": 0.31733790345615537,
+  "surface_stems": {
+    "why": 616,
+    "what": 896,
+    "in": 1110,
+    "how": 788,
+    "who": 53,
+    "which": 18,
+    "according to": 16,
+    "if": 4
+  },
+  "surface_stem_fraction": {
+    "why": 0.17594972864895744,
+    "what": 0.2559268780348472,
+    "in": 0.3170522707797772,
+    "how": 0.225078548986004,
+    "who": 0.015138531848043417,
+    "which": 0.005141388174807198,
+    "according to": 0.004570122822050843,
+    "if": 0.0011425307055127106
+  },
+  "quality_flags": {
+    "teaching_on_placeholder": 747
+  },
+  "quality_flagged_question_count": 747,
+  "quality_flagged_fraction": 0.2133676092544987,
+  "quality_flagged_examples": [
+    {
+      "question": "Who is described as the talented pupil in this teaching on Behold?",
+      "flags": [
+        "teaching_on_placeholder"
+      ],
+      "verse": "BhG 1.3"
+    },
+    {
+      "question": "Why is Dhrstadyumna's role emphasized in this teaching on Behold?",
+      "flags": [
+        "teaching_on_placeholder"
+      ],
+      "verse": "BhG 1.3"
+    },
+    {
+      "question": "Which warriors are mentioned as maharathis in this teaching on Arjuna?",
+      "flags": [
+        "teaching_on_placeholder"
+      ],
+      "verse": "BhG 1.4"
+    },
+    {
+      "question": "How is the king of Kasi described in this teaching on Dhrstaketu?",
+      "flags": [
+        "teaching_on_placeholder"
+      ],
+      "verse": "BhG 1.5"
+    },
+    {
+      "question": "In Chapter 1, Verse 5, who is referred to as 'the best of men' in this teaching on Dhrstaketu?",
+      "flags": [
+        "teaching_on_placeholder"
+      ],
+      "verse": "BhG 1.5"
+    },
+    {
+      "question": "In Chapter 1, Verse 5, what significance do names like Dhrstaketu and Chekitana hold in the context of this teaching on Dhrstaketu?",
+      "flags": [
+        "teaching_on_placeholder"
+      ],
+      "verse": "BhG 1.5"
+    },
+    {
+      "question": "what is Duryodhana doing in this teaching on Brahmanas when he mentions 'the commanders of my army'?",
+      "flags": [
+        "teaching_on_placeholder"
+      ],
+      "verse": "BhG 1.7"
+    },
+    {
+      "question": "Who are some of the key warriors mentioned alongside Bhisma in this teaching on Yourself?",
+      "flags": [
+        "teaching_on_placeholder"
+      ],
+      "verse": "BhG 1.8"
+    },
+    {
+      "question": "Why does Duryodhana believe his army is unconquerable in this teaching on This?",
+      "flags": [
+        "teaching_on_placeholder"
+      ],
+      "verse": "BhG 1.10"
+    },
+    {
+      "question": "How does Duryodhana contrast the protection of the two armies in this teaching on This?",
+      "flags": [
+        "teaching_on_placeholder"
+      ],
+      "verse": "BhG 1.10"
+    },
+    {
+      "question": "What does this teaching on This suggest about reliance on individual strength in battle?",
+      "flags": [
+        "teaching_on_placeholder"
+      ],
+      "verse": "BhG 1.10"
+    },
+    {
+      "question": "In Chapter 1, Verse 11, who is responsible for giving the command to protect Bhisma in this teaching on Therefore?",
+      "flags": [
+        "teaching_on_placeholder"
+      ],
+      "verse": "BhG 1.11"
+    },
+    {
+      "question": "Why does Bhishma blow his conch in this teaching on Kaurava?",
+      "flags": [
+        "teaching_on_placeholder"
+      ],
+      "verse": "BhG 1.12"
+    },
+    {
+      "question": "What does the sudden blaring of instruments symbolize in this teaching on Then?",
+      "flags": [
+        "teaching_on_placeholder"
+      ],
+      "verse": "BhG 1.13"
+    },
+    {
+      "question": "Why did Krishna and Arjuna blow their celestial conches in this teaching on Arjuna?",
+      "flags": [
+        "teaching_on_placeholder"
+      ],
+      "verse": "BhG 1.14"
+    },
+    {
+      "question": "Which conch does Sri Krishna blow in this teaching on Arjuna?",
+      "flags": [
+        "teaching_on_placeholder"
+      ],
+      "verse": "BhG 1.15"
+    },
+    {
+      "question": "What is Sikhandi described as in this teaching on King?",
+      "flags": [
+        "teaching_on_placeholder"
+      ],
+      "verse": "BhG 1.17"
+    },
+    {
+      "question": "What might the mention of figures like Dhṛṣṭadyumna and Virāṭa signify in this teaching on King?",
+      "flags": [
+        "teaching_on_placeholder"
+      ],
+      "verse": "BhG 1.17"
+    },
+    {
+      "question": "In Chapter 1, Verse 17, why is it important for warriors to be acknowledged by their titles and skills in the context of this teaching on King?",
+      "flags": [
+        "teaching_on_placeholder"
+      ],
+      "verse": "BhG 1.17"
+    },
+    {
+      "question": "Who is referred to as Hrishikesha in this teaching on Krishna?",
+      "flags": [
+        "teaching_on_placeholder"
+      ],
+      "verse": "BhG 1.21"
+    },
+    {
+      "question": "What request does Arjuna make to Krishna in this teaching on Krishna?",
+      "flags": [
+        "teaching_on_placeholder"
+      ],
+      "verse": "BhG 1.21"
+    },
+    {
+      "question": "Who are the 'well-wishers' mentioned by Arjuna in this teaching on Duryodhana?",
+      "flags": [
+        "teaching_on_placeholder"
+      ],
+      "verse": "BhG 1.23"
+    },
+    {
+      "question": "What term does Arjuna use to describe Duryodhana in this teaching on Duryodhana?",
+      "flags": [
+        "teaching_on_placeholder"
+      ],
+      "verse": "BhG 1.23"
+    },
+    {
+      "question": "What does Gudakesha ask Hrishikesha to do in this teaching on Thus?",
+      "flags": [
+        "teaching_on_placeholder"
+      ],
+      "verse": "BhG 1.24"
+    },
+    {
+      "question": "In Chapter 1, Verse 24, how is the chariot described in this teaching on Thus, and where is it placed?",
+      "flags": [
+        "teaching_on_placeholder"
+      ],
+      "verse": "BhG 1.24"
+    }
+  ]
+}

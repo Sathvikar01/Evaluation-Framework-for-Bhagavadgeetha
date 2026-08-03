@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+results/
+data/evaluation_v2/raw/
+data/evaluation_v2/anveshana/
+*.log
+*.err
