@@ -30,7 +30,14 @@ def build_adapter(name: str, config: dict[str, Any]):
     entry = datasets.get(name, {})
     path = entry.get("path")
     if name == "bhagavad_gita_qa":
-        return BhagavadGitaQAAdapter(path, version=entry.get("version", "unknown"), seed=config.get("split", {}).get("seed", config.get("seed")), ratios=config.get("split", {}))
+        prepared_dir = Path(config.get("paths", {}).get("evaluation_root", "data/evaluation_v2")) / "bhagavad_gita_qa"
+        return BhagavadGitaQAAdapter(
+            path,
+            version=entry.get("version", "unknown"),
+            seed=config.get("split", {}).get("seed", config.get("seed")),
+            ratios=config.get("split", {}),
+            prepared_dir=prepared_dir if prepared_dir.exists() else None,
+        )
     if name == "gitadb":
         if not path or not Path(path).exists():
             raise FileNotFoundError("GitaDB source is unavailable. The paper-linked tickloop/gitadb repository is no longer reachable; provide a licensed export and mapping.json.")

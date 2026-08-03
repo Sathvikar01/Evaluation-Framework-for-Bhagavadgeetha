@@ -70,10 +70,11 @@ class BhagavadGitaQAAdapter(DatasetAdapter):
     name = "bhagavad_gita_qa"
     track = "without_id_gita_qa"
 
-    def __init__(self, path: str | Path, *, version: str = "local", seed: int = 20260803, ratios: dict[str, float] | None = None) -> None:
+    def __init__(self, path: str | Path, *, version: str = "local", seed: int = 20260803, ratios: dict[str, float] | None = None, prepared_dir: str | Path | None = None) -> None:
         super().__init__(path, version=version)
         self.seed = seed
         self.ratios = ratios or {"train": 0.7, "validation": 0.1, "test": 0.2}
+        self.prepared_dir = Path(prepared_dir) if prepared_dir else None
         self._split_cache: dict[str, list[BenchmarkExample]] | None = None
 
     def _normalize(self) -> list[BenchmarkExample]:
@@ -101,9 +102,25 @@ class BhagavadGitaQAAdapter(DatasetAdapter):
             ))
         return rows
 
+    def _load_prepared_split(self, split: str) -> list[BenchmarkExample] | None:
+        """Prefer frozen prepare-data JSONL when present so eval matches the artifact."""
+        candidates: list[Path] = []
+        if self.prepared_dir is not None:
+            candidates.append(self.prepared_dir / f"{split}.jsonl")
+        if self.path is not None:
+            candidates.append(self.path.parent / f"{split}.jsonl")
+        for path in candidates:
+            if path.exists():
+                return [BenchmarkExample(**record) for record in load_json_records(path)]
+        return None
+
     def split_manifest(self) -> dict[str, Any]:
         if self._split_cache is None:
-            self._split_cache = split_by_verse_group(self._normalize(), seed=self.seed, ratios=self.ratios)
+            prepared = {split: self._load_prepared_split(split) for split in ("train", "validation", "test")}
+            if all(prepared[split] is not None for split in ("train", "validation", "test")):
+                self._split_cache = {split: prepared[split] or [] for split in prepared}
+            else:
+                self._split_cache = split_by_verse_group(self._normalize(), seed=self.seed, ratios=self.ratios)
         manifest = {"seed": self.seed, "dataset": self.name, "version": self.version,
                     "checksum": sha256_file(self.path), "splits": {}}
         for split, rows in self._split_cache.items():
@@ -116,6 +133,7 @@ class BhagavadGitaQAAdapter(DatasetAdapter):
     def prepare(self, output_dir: str | Path) -> dict[str, Any]:
         output = Path(output_dir)
         output.mkdir(parents=True, exist_ok=True)
+        self.prepared_dir = output
         self._split_cache = split_by_verse_group(self._normalize(), seed=self.seed, ratios=self.ratios)
         for split, rows in self._split_cache.items():
             path = output / f"{split}.jsonl"
@@ -129,6 +147,9 @@ class BhagavadGitaQAAdapter(DatasetAdapter):
         return {"dataset": self.name, "normalized": True, "manifest": manifest}
 
     def load(self, split: str = "test", max_examples: int | None = None) -> list[BenchmarkExample]:
+        prepared = self._load_prepared_split(split)
+        if prepared is not None:
+            return self._limit(prepared, max_examples)
         if self._split_cache is None:
             self._split_cache = split_by_verse_group(self._normalize(), seed=self.seed, ratios=self.ratios)
         if split not in self._split_cache:

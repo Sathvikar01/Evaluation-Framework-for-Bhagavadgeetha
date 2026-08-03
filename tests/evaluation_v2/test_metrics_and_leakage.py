@@ -17,6 +17,7 @@ def test_empty_and_macro_summary():
     assert empty["excluded"] is True
     summary = summarize_retrieval([{"dataset_name": "a", "metrics": {"recall@1": 1.0}}, {"dataset_name": "b", "metrics": {"recall@1": 0.0}}])
     assert summary["metrics"]["recall@1"]["denominator"] == 2
+    assert "excluded" not in summary["metrics"]
 
 
 def test_generation_checks_unsupported_and_duplicate_citations():
@@ -24,6 +25,7 @@ def test_generation_checks_unsupported_and_duplicate_citations():
     assert checks["unsupported_references"] == ["BhG 3.1"]
     assert checks["duplicate_citation_count"] == 1
     assert checks["citation_precision"] == .5
+    assert checks["unsupported_penalty"] == .5
 
 
 def test_leakage_exact_and_clean(tmp_path):

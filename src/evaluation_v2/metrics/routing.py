@@ -8,7 +8,13 @@ from ..datasets.with_id import expand_reference, parse_reference_query
 
 
 def routing_metrics(rows: list[dict[str, Any]], inventory: set[str]) -> dict[str, Any]:
-    valid = invalid = valid_correct = lookup_correct = normalization_correct = 0
+    """Score live-pipeline routing behavior, not the evaluation parser.
+
+    Invalid-query rejection uses pipeline outputs (predicted refs / short-
+    circuit flag). The local ``parse_reference_query`` helper is only used to
+    identify range queries and to compute alias coverage diagnostics.
+    """
+    valid = invalid = lookup_correct = alias_parse_ok = 0
     range_total = range_correct = 0
     false_positive = incorrect_route = 0
     latencies = []
@@ -16,30 +22,44 @@ def routing_metrics(rows: list[dict[str, Any]], inventory: set[str]) -> dict[str
         expected_valid = bool(row.get("expected_valid", row.get("example", {}).get("metadata", {}).get("expected_valid", False)))
         parsed = parse_reference_query(row.get("query", row.get("example", {}).get("query", "")))
         predicted = list(dict.fromkeys(row.get("predicted_refs", row.get("retrieved_refs", []))))
+        short_circuit = bool(
+            row.get("exact_reference_short_circuit")
+            or row.get("stages", {}).get("exact_reference_short_circuit")
+            or (row.get("health") or {}).get("exact_reference_short_circuit")
+        )
         if row.get("routing_latency_seconds") is not None:
             latencies.append(float(row["routing_latency_seconds"]))
         if expected_valid:
             valid += 1
             if parsed:
-                valid_correct += 1
+                alias_parse_ok += 1
             expected = list(row.get("expected_refs", row.get("example", {}).get("gold_verse_refs", [])))
-            if set(predicted) == set(expected): lookup_correct += 1
-            if predicted and set(predicted) == set(expected): normalization_correct += 1
+            if set(predicted) == set(expected):
+                lookup_correct += 1
+            if predicted and set(predicted) != set(expected):
+                incorrect_route += 1
+            elif row.get("incorrect_chapter_or_verse"):
+                incorrect_route += 1
             if parsed and parsed[0][2] > parsed[0][1]:
                 range_total += 1
                 expanded = set(expand_reference(parsed[0], inventory))
-                if set(predicted) == expanded: range_correct += 1
+                if set(predicted) == expanded:
+                    range_correct += 1
         else:
             invalid += 1
-            if parsed or predicted:
+            # Score the pipeline, not the eval parser: a well-formed-looking
+            # invalid ref may still parse locally while the live router
+            # correctly returns nothing.
+            if predicted or short_circuit:
                 false_positive += 1
-        if row.get("incorrect_chapter_or_verse"):
-            incorrect_route += 1
     return {
-        "sample_count": len(rows), "valid_count": valid, "invalid_count": invalid,
-        "valid_reference_routing_accuracy": valid_correct / valid if valid else None,
+        "sample_count": len(rows),
+        "valid_count": valid,
+        "invalid_count": invalid,
+        "alias_parse_coverage": alias_parse_ok / valid if valid else None,
+        "valid_reference_routing_accuracy": lookup_correct / valid if valid else None,
         "exact_verse_lookup_accuracy": lookup_correct / valid if valid else None,
-        "reference_normalization_accuracy": normalization_correct / valid if valid else None,
+        "reference_normalization_accuracy": lookup_correct / valid if valid else None,
         "range_expansion_exact_match": range_correct / range_total if range_total else None,
         "range_expansion_count": range_total,
         "invalid_reference_rejection_rate": 1 - false_positive / invalid if invalid else None,
@@ -50,7 +70,14 @@ def routing_metrics(rows: list[dict[str, Any]], inventory: set[str]) -> dict[str
 
 
 def _latency_summary(values: list[float]) -> dict[str, Any]:
-    if not values: return {"n": 0, "p50": None, "p95": None, "mean": None, "max": None}
+    if not values:
+        return {"n": 0, "p50": None, "p95": None, "mean": None, "max": None}
     ordered = sorted(values)
     percentile = lambda p: ordered[min(len(ordered) - 1, max(0, int((len(ordered) - 1) * p)))]
-    return {"n": len(values), "p50": percentile(.50), "p95": percentile(.95), "mean": sum(values) / len(values), "max": max(values)}
+    return {
+        "n": len(values),
+        "p50": percentile(.50),
+        "p95": percentile(.95),
+        "mean": sum(values) / len(values),
+        "max": max(values),
+    }
