@@ -44,7 +44,7 @@ def retrieval_metrics(
         top = ranked[:k]
         hits = [item for item in top if item in relevant]
         result[f"recall@{k}"] = len(set(hits)) / len(relevant) if relevant else None
-        result[f"precision@{k}"] = len(set(hits)) / len(set(top)) if top else 0.0
+        result[f"precision@{k}"] = len(set(hits)) / k if k > 0 else 0.0
         result[f"graded_recall@{k}"] = sum(labels[item] for item in set(hits)) / sum(labels.values()) if labels else None
     first_rank = next((index for index, item in enumerate(ranked, 1) if item in relevant), None)
     result["mrr"] = 1.0 / first_rank if first_rank else 0.0

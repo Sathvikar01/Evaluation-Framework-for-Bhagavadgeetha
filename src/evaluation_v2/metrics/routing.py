@@ -64,7 +64,7 @@ def routing_metrics(rows: list[dict[str, Any]], inventory: set[str]) -> dict[str
         "range_expansion_count": range_total,
         "invalid_reference_rejection_rate": 1 - false_positive / invalid if invalid else None,
         "false_positive_short_circuit_rate": false_positive / invalid if invalid else None,
-        "incorrect_chapter_verse_routing_rate": incorrect_route / max(valid, 1),
+        "incorrect_chapter_verse_routing_rate": incorrect_route / valid if valid else None,
         "latency_seconds": _latency_summary(latencies),
     }
 

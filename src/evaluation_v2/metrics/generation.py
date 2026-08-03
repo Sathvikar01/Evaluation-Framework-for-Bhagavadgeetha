@@ -31,8 +31,9 @@ def generation_checks(
     citation_precision = len(set(valid)) / len(set(citations)) if citations else (1.0 if not expect_citation else 0.0)
     citation_recall = len(set(citations) & gold) / len(gold) if gold else None
     unsupported_penalty = 1.0 - (len(set(unsupported)) / len(set(citations)) if citations else 0.0)
-    non_empty = 1.0 if answer.strip() else 0.0
-    deterministic_score = (citation_precision + unsupported_penalty + non_empty) / 3.0
+    empty_or_refusal = not answer.strip() or bool(re.search(r"\b(I don't have|I cannot|unable to answer|no relevant verses)\b", answer, re.I))
+    valid_answer = 0.0 if empty_or_refusal else 1.0
+    deterministic_score = (citation_precision + unsupported_penalty + valid_answer) / 3.0 if not (empty_or_refusal and expect_citation) else 0.0
     return {
         "citations": citations,
         "valid_citations": valid,
@@ -42,7 +43,7 @@ def generation_checks(
         "retrieved_citation_rate": len(set(valid)) / len(set(retrieved_refs)) if retrieved_refs else 0.0,
         "duplicate_citation_count": len(raw_matches) - len(citations),
         "has_expected_citation": bool(citations) if expect_citation else True,
-        "empty_or_refusal": not answer.strip() or bool(re.search(r"\b(I don't have|I cannot|unable to answer|no relevant verses)\b", answer, re.I)),
+        "empty_or_refusal": empty_or_refusal,
         "sanskrit_or_iast_quote_matches": exact_matches,
         "chapter_verse_consistent": not unsupported,
         "unsupported_penalty": unsupported_penalty,

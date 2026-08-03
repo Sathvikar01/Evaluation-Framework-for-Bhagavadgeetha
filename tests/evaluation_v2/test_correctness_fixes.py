@@ -101,3 +101,26 @@ def test_generation_accepts_bg_alias_and_penalizes_unsupported():
     assert "BhG 3.1" in checks["unsupported_references"]
     assert checks["unsupported_penalty"] == 0.5
     assert 0.0 < checks["deterministic_score"] < 1.0
+
+
+def test_precision_at_k_uses_cutoff_k_denominator():
+    metrics = retrieval_metrics(["BhG 1.1"], ["BhG 1.1"], cutoffs=(5, 10))
+    assert metrics["precision@5"] == 0.2
+    assert metrics["precision@10"] == 0.1
+
+
+def test_generation_refusal_zeroes_score():
+    checks = generation_checks(
+        "I don't have relevant verses to answer this question.",
+        retrieved_refs={"BhG 2.47"},
+        gold_refs={"BhG 2.47"},
+        expect_citation=True,
+    )
+    assert checks["empty_or_refusal"] is True
+    assert checks["deterministic_score"] == 0.0
+
+
+def test_routing_metrics_returns_none_for_zero_valid():
+    summary = routing_metrics([], {"BhG 2.47"})
+    assert summary["incorrect_chapter_verse_routing_rate"] is None
+
