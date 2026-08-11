@@ -43,6 +43,8 @@ class GitaDBAdapter(DatasetAdapter):
 
     def _records(self) -> list[BenchmarkExample]:
         assert self.path is not None
+        self.unmapped = []
+        self.ambiguous = []
         self._load_mapping()
         output = []
         for index, record in enumerate(load_json_records(self.path)):

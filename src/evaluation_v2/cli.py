@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import random
 import sys
 from pathlib import Path
 
@@ -23,6 +25,9 @@ from .question_audit import audit_questions
 from .registry import build_adapter, official_dataset_names
 from .reporting import build_summary, write_run_report
 from .runner import run_generation, run_retrieval, write_json, write_jsonl
+from .benchmark import audit_benchmark, evaluate as evaluate_universal, load_benchmark
+from .universal_adapter import build_universal_adapter
+from .ablation import compare_ablation_runs, write_ablation_report
 
 
 def _config(args: argparse.Namespace) -> dict:
@@ -79,8 +84,52 @@ def _load_examples(config: dict, names: list[str], split: str, max_examples: int
     examples = []
     for name in names:
         adapter = quick_adapter(config, name) if name.startswith("quick_") else build_adapter(name, config)
-        examples.extend(adapter.load(split=split, max_examples=max_examples))
+        rows = adapter.load(split=split, max_examples=None)
+        if max_examples is not None:
+            if max_examples < 0:
+                raise ValueError("max_examples must be non-negative")
+            # Sampling is deterministic but independent of source-file order.
+            # This keeps smoke runs from silently measuring a dataset prefix.
+            seed_material = f"{config.get('seed', 0)}:{name}:{split}".encode("utf-8")
+            seed = int.from_bytes(hashlib.sha256(seed_material).digest()[:8], "big")
+            random.Random(seed).shuffle(rows)
+            rows = rows[:max_examples]
+        examples.extend(rows)
     return examples
+
+
+def _effective_max_examples(config: dict, args: argparse.Namespace, track: str) -> int | None:
+    if args.max_examples is not None:
+        return args.max_examples
+    section = "generation" if track == "generation" else "retrieval"
+    value = config.get(section, {}).get("max_examples")
+    return int(value) if value is not None else None
+
+
+def _warmup(adapter: LivePipelineAdapter, examples: list, config: dict) -> None:
+    count = max(0, int(config.get("warmup_runs", 0) or 0))
+    for example in examples[:count]:
+        adapter.query_retrieval(
+            example.query,
+            answer="",
+            use_api=bool(config.get("retrieval", {}).get("use_api", False)),
+        )
+
+
+def _enforce_component_health(config: dict, details: dict, track: str) -> None:
+    if not config.get("strict_component_health", True):
+        return
+    health = details.get("component_health", {})
+    n = int(health.get("n", 0) or 0)
+    degraded = int(health.get("degraded_count", 0) or 0)
+    required = int(health.get("stage_observability_required_count", 0) or 0)
+    complete = int(health.get("stage_observability_complete_count", 0) or 0)
+    if not health.get("operational", False) or degraded or (required and complete < required):
+        raise RuntimeError(
+            f"{track}: strict component-health gate failed "
+            f"(operational={health.get('operational')}, degraded={degraded}, "
+            f"stage_observability={complete}/{n})"
+        )
 
 
 def cmd_leakage(args: argparse.Namespace) -> int:
@@ -140,13 +189,14 @@ def _audit_with_split_policy(config: dict, names: list[str], test_examples: list
 def _run(args: argparse.Namespace, track: str) -> int:
     config = _config(args)
     names = _dataset_names(args, _default_datasets_for_track(track))
-    examples = _load_examples(config, names, "test", args.max_examples)
+    examples = _load_examples(config, names, "test", _effective_max_examples(config, args, track))
     if not examples: raise SystemExit("no examples available; run prepare-data or configure a local dataset")
     audit = _audit_with_split_policy(config, names, examples)
     if audit["definite_count"] and not args.allow_contaminated:
         raise SystemExit("official run blocked by definite leakage; use --allow-contaminated only for a visibly diagnostic run")
     adapter = LivePipelineAdapter(rebuild_indices=bool(getattr(args, "rebuild_indices", False))).build()
     try:
+        _warmup(adapter, examples, config)
         if track == "generation":
             rows, details = run_generation(examples, adapter, config={**config, "generation": {**config.get("generation", {}), "allow_api": args.allow_api}})
             tracks = {"generation": details}
@@ -157,8 +207,14 @@ def _run(args: argparse.Namespace, track: str) -> int:
             retrieval_rows = rows
     finally:
         adapter.close()
+    _enforce_component_health(config, details, track)
     out = Path(args.output) if args.output else Path(config["paths"]["results_root"]) / track
-    summary = build_summary(tracks, official=not audit["definite_count"] and not args.allow_contaminated, leakage_status=audit["status"], health=details.get("component_health", {}))
+    official = (
+        config.get("mode", "official") == "official"
+        and not audit["definite_count"]
+        and not args.allow_contaminated
+    )
+    summary = build_summary(tracks, official=official, leakage_status=audit["status"], health=details.get("component_health", {}))
     write_run_report(out, summary, retrieval_rows, generation_rows=rows if track == "generation" else None)
     write_leakage_report(audit, out)
     write_manifest(out / "manifest.json", capture_manifest(config=config, args=vars(args), health=details.get("component_health", {}), leakage_status=audit["status"]))
@@ -172,7 +228,7 @@ def cmd_quick(args: argparse.Namespace) -> int:
         prepare_quick(config)
     track = "with_id" if args.track == "with_id" else "without_id_gita_qa"
     names = ["quick_with_id"] if track == "with_id" else ["quick_bhagavad_gita_qa"]
-    examples = _load_examples(config, names, "test", args.max_examples)
+    examples = _load_examples(config, names, "test", _effective_max_examples(config, args, track))
     if not examples:
         raise SystemExit("quick dataset is empty; run prepare-quick or check the configured source")
     audit = audit_examples([row.to_dict(include_raw=False) for row in examples], repo_root=".", thresholds=config.get("leakage"))
@@ -180,6 +236,7 @@ def cmd_quick(args: argparse.Namespace) -> int:
         raise SystemExit("quick diagnostic blocked by definite leakage; use --allow-contaminated only for diagnosis")
     adapter = LivePipelineAdapter(rebuild_indices=bool(getattr(args, "rebuild_indices", False))).build()
     try:
+        _warmup(adapter, examples, config)
         rows, details = run_retrieval(examples, adapter, config=config, with_id=track == "with_id")
     finally:
         adapter.close()
@@ -187,6 +244,7 @@ def cmd_quick(args: argparse.Namespace) -> int:
     # Quick sets are deliberately a balanced diagnostic, not the held-out
     # release score. They still expose the same track metrics and overall
     # percentage for fast model-to-model checks.
+    _enforce_component_health(config, details, track)
     summary = build_summary({track: details}, official=False, leakage_status=audit["status"], health=details.get("component_health", {}))
     summary["quick"] = {"status": "balanced_diagnostic", "official_release_score": False}
     write_run_report(out, summary, rows)
@@ -200,14 +258,17 @@ def cmd_all(args: argparse.Namespace) -> int:
     all_rows = []; tracks = {}; health = {}; audits = []
     for track, names in (("with_id", ["with_id"]), ("without_id_gita_qa", ["bhagavad_gita_qa"]), ("cross_lingual_gita", ["gitadb"]), ("external_generalization", ["anveshana"])):
         try:
-            examples = _load_examples(config, names, "test", args.max_examples)
+            examples = _load_examples(config, names, "test", _effective_max_examples(config, args, track))
             if not examples: continue
             audit = _audit_with_split_policy(config, names, examples)
             audits.append(audit)
             if audit["definite_count"] and not args.allow_contaminated: raise RuntimeError(f"{track}: leakage gate failed")
             adapter = LivePipelineAdapter(rebuild_indices=bool(getattr(args, "rebuild_indices", False))).build()
-            try: rows, details = run_retrieval(examples, adapter, config=config, with_id=track == "with_id")
+            try:
+                _warmup(adapter, examples, config)
+                rows, details = run_retrieval(examples, adapter, config=config, with_id=track == "with_id")
             finally: adapter.close()
+            _enforce_component_health(config, details, track)
             tracks[track] = details; all_rows.extend(rows); health[track] = details.get("component_health", {})
         except (FileNotFoundError, RuntimeError) as exc:
             if not args.skip_missing_datasets: raise
@@ -218,7 +279,17 @@ def cmd_all(args: argparse.Namespace) -> int:
         leakage_status = "clean"
     else:
         leakage_status = "not_run"
-    summary = build_summary(tracks, official=leakage_status == "clean" and not args.allow_contaminated and not args.skip_missing_datasets, leakage_status=leakage_status, health=health)
+    summary = build_summary(
+        tracks,
+        official=(
+            config.get("mode", "official") == "official"
+            and leakage_status == "clean"
+            and not args.allow_contaminated
+            and not args.skip_missing_datasets
+        ),
+        leakage_status=leakage_status,
+        health=health,
+    )
     write_run_report(output, summary, all_rows)
     combined_audit = {"schema_version": "leakage_v2.1", "status": leakage_status, "official": leakage_status == "clean", "sources_scanned": sum(a.get("sources_scanned", 0) for a in audits), "findings": [finding for audit in audits for finding in audit.get("findings", [])]}
     combined_audit["finding_count"] = len(combined_audit["findings"]); combined_audit["definite_count"] = sum(1 for finding in combined_audit["findings"] if finding.get("severity") == "definite")
@@ -229,6 +300,72 @@ def cmd_all(args: argparse.Namespace) -> int:
 
 def cmd_compare(args: argparse.Namespace) -> int:
     print(json.dumps(compare_files(args.a, args.b, seed=args.seed, repetitions=args.repetitions), ensure_ascii=False, indent=2)); return 0
+
+
+def _load_adapter_config(args: argparse.Namespace) -> tuple[object, dict]:
+    if args.adapter_config:
+        import yaml
+        path = Path(args.adapter_config)
+        payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("adapter config must be a YAML/JSON mapping")
+        adapter_config = payload.get("adapter", payload.get("system", {}).get("adapter", payload))
+        if not isinstance(adapter_config, dict):
+            raise ValueError("adapter config must contain an adapter mapping")
+    elif args.adapter:
+        adapter_config = {"kind": "python", "target": args.adapter}
+    else:
+        raise ValueError("provide --adapter module:object or --adapter-config FILE")
+    return build_universal_adapter(adapter_config), adapter_config
+
+
+def _redact_secrets(value):
+    if isinstance(value, dict):
+        return {
+            key: "[REDACTED]" if any(marker in str(key).lower() for marker in ("authorization", "api_key", "apikey", "token", "secret", "password")) else _redact_secrets(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_secrets(item) for item in value]
+    return value
+
+
+def cmd_universal(args: argparse.Namespace) -> int:
+    adapter, adapter_config = _load_adapter_config(args)
+    result = evaluate_universal(
+        adapter, args.dataset, system_name=args.system_name, split=args.split,
+        top_k=args.top_k, cutoffs=args.cutoffs, seed=args.seed,
+        bootstrap_repetitions=args.bootstrap_repetitions,
+        confidence=args.confidence, output_dir=args.output,
+        include_generation=args.include_generation,
+        benchmark_version=args.benchmark_version,
+        system_metadata={"adapter": _redact_secrets(adapter_config), "retrieval_architecture": args.retrieval_architecture,
+                         "corpus_representation": args.corpus_representation},
+    )
+    print(json.dumps({key: value for key, value in result.items() if key != "per_query"}, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_audit_benchmark(args: argparse.Namespace) -> int:
+    examples = load_benchmark(args.dataset, split=None)
+    report = audit_benchmark(examples)
+    if args.output:
+        write_json(args.output, report)
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_ablation(args: argparse.Namespace) -> int:
+    variants = {}
+    for value in args.run:
+        if "=" not in value:
+            raise ValueError("each --run must be NAME=RUN_DIRECTORY")
+        name, path = value.split("=", 1)
+        variants[name] = path
+    result = compare_ablation_runs(args.baseline, variants, seed=args.seed, repetitions=args.repetitions)
+    write_ablation_report(args.output, result)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -244,6 +381,37 @@ def build_parser() -> argparse.ArgumentParser:
     all_cmd = sub.add_parser("all"); all_cmd.add_argument("--config", default=argparse.SUPPRESS); all_cmd.add_argument("--output-dir"); all_cmd.add_argument("--max-examples", type=int); all_cmd.add_argument("--allow-contaminated", action="store_true"); all_cmd.add_argument("--skip-missing-datasets", action="store_true"); all_cmd.add_argument("--rebuild-indices", action="store_true"); all_cmd.set_defaults(func=cmd_all)
     quick_cmd = sub.add_parser("quick"); quick_cmd.add_argument("--config", default=argparse.SUPPRESS); quick_cmd.add_argument("--track", choices=("with_id", "without_id_gita_qa"), default="without_id_gita_qa"); quick_cmd.add_argument("--max-examples", type=int); quick_cmd.add_argument("--output"); quick_cmd.add_argument("--allow-contaminated", action="store_true"); quick_cmd.add_argument("--rebuild-indices", action="store_true"); quick_cmd.set_defaults(func=cmd_quick)
     comp = sub.add_parser("compare"); comp.add_argument("--config", default=argparse.SUPPRESS); comp.add_argument("a"); comp.add_argument("b"); comp.add_argument("--seed", type=int, default=20260803); comp.add_argument("--repetitions", type=int, default=2000); comp.set_defaults(func=cmd_compare)
+    universal = sub.add_parser("universal", help="Evaluate any adapter implementing retrieve(query, k)")
+    universal.add_argument("--config", default=argparse.SUPPRESS)
+    universal.add_argument("--dataset", required=True)
+    universal.add_argument("--adapter", help="Python module:object or path.py:object")
+    universal.add_argument("--adapter-config", help="YAML/JSON HTTP, command, replay, or Python adapter config")
+    universal.add_argument("--system-name", required=True)
+    universal.add_argument("--retrieval-architecture", default="custom")
+    universal.add_argument("--corpus-representation", default="unknown")
+    universal.add_argument("--benchmark-version")
+    universal.add_argument("--split", default="test", choices=("development", "validation", "test", "diagnostic"))
+    universal.add_argument("--top-k", type=int, default=50)
+    universal.add_argument("--cutoffs", type=int, nargs="+", default=[1, 3, 5, 10, 20, 50])
+    universal.add_argument("--seed", type=int, default=20260803)
+    universal.add_argument("--bootstrap-repetitions", type=int, default=2000)
+    universal.add_argument("--confidence", type=float, default=.95)
+    universal.add_argument("--include-generation", action="store_true")
+    universal.add_argument("--output", required=True)
+    universal.set_defaults(func=cmd_universal)
+    audit_bench = sub.add_parser("audit-benchmark", help="Validate taxonomy, distributions, leakage, and agreement")
+    audit_bench.add_argument("--config", default=argparse.SUPPRESS)
+    audit_bench.add_argument("dataset")
+    audit_bench.add_argument("--output")
+    audit_bench.set_defaults(func=cmd_audit_benchmark)
+    ablation = sub.add_parser("ablation", help="Controlled paired comparison of a baseline and component variants")
+    ablation.add_argument("--config", default=argparse.SUPPRESS)
+    ablation.add_argument("--baseline", required=True)
+    ablation.add_argument("--run", action="append", default=[], help="NAME=RUN_DIRECTORY; repeat for variants")
+    ablation.add_argument("--seed", type=int, default=20260803)
+    ablation.add_argument("--repetitions", type=int, default=2000)
+    ablation.add_argument("--output", required=True)
+    ablation.set_defaults(func=cmd_ablation)
     return parser
 
 

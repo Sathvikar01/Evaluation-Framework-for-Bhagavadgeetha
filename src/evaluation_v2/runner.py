@@ -44,13 +44,17 @@ def _refs(records: Iterable[dict[str, Any]], *, verse_only: bool = True) -> list
 
 def stage_analysis(example: BenchmarkExample, result: dict[str, Any], final_refs: list[str]) -> dict[str, Any]:
     intermediate = result.get("intermediate", {})
-    stage_refs = {name: _refs(intermediate.get(name, [])) for name in ("vector_results", "graph_results", "bm25_results", "fused_results", "reranked_results")}
+    stage_names = ("vector_results", "graph_results", "bm25_results", "interpretation_results", "fused_results", "reranked_results")
+    pool_stage_names = ("vector_results", "graph_results", "bm25_results", "interpretation_results", "fused_results")
+    stage_refs = {name: _refs(intermediate.get(name, [])) for name in stage_names}
+    candidate_pool_refs = list(dict.fromkeys(ref for name in pool_stage_names for ref in stage_refs[name]))
     final_refs = list(dict.fromkeys(final_refs))
     gold = set(example.gold_verse_refs)
     containment = {name: bool(gold.intersection(refs)) for name, refs in stage_refs.items()}
+    final_hit = bool(gold.intersection(final_refs))
     exact_short_circuit = bool(result.get("intermediate", {}).get("verse_ref_detected", False))
     if exact_short_circuit:
-        if gold and gold.intersection(final_refs):
+        if gold and final_hit:
             failure = "success"
         elif not gold:
             # Invalid-reference probes: short-circuit without gold is a false positive.
@@ -59,20 +63,26 @@ def stage_analysis(example: BenchmarkExample, result: dict[str, Any], final_refs
             failure = "exact_reference_short_circuit_miss"
     elif not gold:
         failure = "not_applicable"
-    elif not any(containment.get(name, False) for name in ("vector_results", "graph_results", "bm25_results")):
+    # The final output is the scored contract. A late injection can be absent
+    # from an earlier trace stage and is still a successful retrieval.
+    elif final_hit:
+        failure = "success"
+    elif not any(containment.get(name, False) for name in pool_stage_names):
         failure = "source_recall_failure"
     elif not containment.get("fused_results", False):
         failure = "fusion_drop"
     elif not containment.get("reranked_results", False):
         failure = "reranker_miss"
-    elif not gold.intersection(final_refs):
+    elif not final_hit:
         failure = "final_formatting_or_mapping_failure"
     else:
         failure = "success"
     return {
         "stage_refs": stage_refs,
         "containment": containment,
-        "union_pool_containment": bool(gold.intersection(set().union(*(set(value) for value in stage_refs.values())))),
+        "candidate_pool_refs": candidate_pool_refs,
+        "union_pool_containment": bool(gold.intersection(set(candidate_pool_refs))),
+        "final_rank_containment": final_hit,
         "failure_class": failure,
         "exact_reference_short_circuit": exact_short_circuit,
     }
@@ -86,12 +96,26 @@ def run_retrieval(
     for example in examples:
         start = time.perf_counter()
         try:
-            observation = adapter.query_retrieval(example.query, answer=example.reference_answer, use_api=bool(config.get("retrieval", {}).get("use_api", False)))
-            result = observation.result
-            retrieved_records = result.get("reranked_results", [])
+            answer_aware = bool(config.get("retrieval", {}).get("answer_aware", False))
+            observation = adapter.query_retrieval(
+                example.query,
+                answer=example.reference_answer if answer_aware else "",
+                use_api=bool(config.get("retrieval", {}).get("use_api", False)),
+            )
+            result = dict(observation.result)
+            intermediate = dict(result.get("intermediate") or {})
+            retrieved_records = result.get("reranked_results") or intermediate.get("reranked_results") or []
+            intermediate.setdefault("reranked_results", retrieved_records)
+            result["intermediate"] = intermediate
             retrieved_refs = _refs(retrieved_records)
-            metrics = retrieval_metrics(retrieved_refs, example.gold_verse_refs, graded_relevance=example.graded_relevance, cutoffs=config.get("retrieval", {}).get("cutoffs", [1, 3, 5, 10, 50]))
             stage = stage_analysis(example, result, retrieved_refs)
+            metrics = retrieval_metrics(
+                retrieved_refs,
+                example.gold_verse_refs,
+                graded_relevance=example.graded_relevance,
+                cutoffs=config.get("retrieval", {}).get("cutoffs", [1, 3, 5, 10, 50]),
+                candidate_pool_refs=stage["candidate_pool_refs"],
+            )
             row = {
                 "example_id": example.example_id,
                 "dataset_name": example.dataset_name,
@@ -110,6 +134,7 @@ def run_retrieval(
                 "parsed_refs": parse_reference_query(example.query),
                 "predicted_refs": retrieved_refs,
                 "exact_reference_short_circuit": stage["exact_reference_short_circuit"],
+                "answer_aware": answer_aware,
             }
             if with_id:
                 row["routing_latency_seconds"] = observation.elapsed_seconds
@@ -130,26 +155,53 @@ def run_retrieval(
 
 def run_generation(examples: list[BenchmarkExample], adapter: LivePipelineAdapter, *, config: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     rows = []
+    health: list[dict[str, Any]] = []
     for example in examples:
         try:
-            observation = adapter.query_generation(example.query, answer=example.reference_answer, use_api=bool(config.get("generation", {}).get("allow_api", False)))
-            result = observation.result
-            retrieved = result.get("reranked_results", [])
+            answer_aware = bool(config.get("generation", {}).get("answer_aware", False))
+            observation = adapter.query_generation(
+                example.query,
+                answer=example.reference_answer if answer_aware else "",
+                use_api=bool(config.get("generation", {}).get("allow_api", False)),
+            )
+            result = dict(observation.result)
+            intermediate = dict(result.get("intermediate") or {})
+            retrieved = result.get("reranked_results") or intermediate.get("reranked_results") or []
             retrieved_refs = set(_refs(retrieved))
             answer = result.get("answer", "")
             checks = generation_checks(answer, retrieved_refs=retrieved_refs, gold_refs=set(example.gold_verse_refs), expect_citation=bool(example.gold_verse_refs))
-            rows.append({"example_id": example.example_id, "dataset_name": example.dataset_name, "query": example.query, "reference_answer": example.reference_answer, "retrieved_verses": retrieved[:10], "generated_answer": answer, "citations": checks["citations"], "deterministic_scores": checks, "human_score_fields": {"answer_relevance": None, "claim_support": None, "citation_completeness": None, "philosophical_coverage": None, "translation_faithfulness": None, "unsupported_elaboration": None, "commentary_attribution": None, "answer_clarity": None, "abstention_quality": None}, "notes": "", "latency": {"generation": observation.elapsed_seconds}, "health": observation.health})
+            rows.append({"example_id": example.example_id, "dataset_name": example.dataset_name, "query": example.query, "reference_answer": example.reference_answer, "retrieved_verses": retrieved[:10], "generated_answer": answer, "citations": checks["citations"], "deterministic_scores": checks, "human_score_fields": {"answer_relevance": None, "claim_support": None, "citation_completeness": None, "philosophical_coverage": None, "translation_faithfulness": None, "unsupported_elaboration": None, "commentary_attribution": None, "answer_clarity": None, "abstention_quality": None}, "notes": "", "latency": {"generation": observation.elapsed_seconds}, "health": observation.health, "answer_aware": answer_aware})
+            health.append(observation.health)
         except Exception as exc:
             rows.append({"example_id": example.example_id, "dataset_name": example.dataset_name, "query": example.query, "reference_answer": example.reference_answer, "generated_answer": "", "deterministic_scores": {"error": str(exc)}, "human_score_fields": {}, "notes": f"execution error: {exc}", "latency": {}, "error": str(exc)})
+            health.append({"operational": False, "degraded": True})
     valid = [row for row in rows if "error" not in row]
     score_values = [row["deterministic_scores"].get("deterministic_score", 0) for row in valid]
-    return rows, {"n": len(rows), "n_scored": len(valid), "deterministic_score": sum(score_values) / len(score_values) if score_values else None, "latency": summarize_latency(row.get("latency", {}).get("generation", 0) for row in rows)}
+    return rows, {"n": len(rows), "n_scored": len(valid), "deterministic_score": sum(score_values) / len(score_values) if score_values else None, "latency": summarize_latency(row.get("latency", {}).get("generation", 0) for row in rows), "component_health": component_health_summary(health)}
 
 
 def component_health_summary(health: list[dict[str, Any]]) -> dict[str, Any]:
-    if not health: return {"n": 0, "operational": False}
+    if not health: return {"n": 0, "operational": False, "degraded_count": 0, "stage_observability_required_count": 0, "stage_observability_complete_count": 0}
     keys = sorted({key for item in health for key in item})
-    return {"n": len(health), "operational": all(item.get("operational", True) and not item.get("degraded", False) for item in health), "components": {key: sum(bool(item.get(key)) for item in health) / len(health) for key in keys}}
+    degraded_count = sum(bool(item.get("degraded", False)) for item in health)
+    stage_required_count = sum("stage_observability" in item for item in health)
+    stage_complete_count = sum(
+        bool(item.get("exact_reference_short_circuit"))
+        or (
+            bool(item.get("stage_observability"))
+            and all((item.get("stage_observability") or {}).values())
+        )
+        for item in health
+    )
+    components = {}
+    for key in keys:
+        if key == "stage_observability":
+            components[key] = stage_complete_count / len(health)
+        elif key == "degraded":
+            components[key] = 1.0 - degraded_count / len(health)
+        else:
+            components[key] = sum(bool(item.get(key)) for item in health) / len(health)
+    return {"n": len(health), "operational": all(item.get("operational", True) for item in health), "degraded_count": degraded_count, "stage_observability_required_count": stage_required_count, "stage_observability_complete_count": stage_complete_count, "components": components}
 
 
 def summarize_stage(rows: list[dict[str, Any]]) -> dict[str, Any]:

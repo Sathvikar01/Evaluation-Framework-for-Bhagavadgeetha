@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://promptfoo.dev/config-schema.json
+description: Bhagavad Gita RAG supplementary generation/citation evaluation
+
+prompts:
+  - "{{query}}"
+
+providers:
+  - id: file://provider.py
+    label: universal-bhagavad-gita-rag
+
+tests: file://tests.py:generate_tests
+
+defaultTest:
+  assert:
+    - type: python
+      value: file://assertions.py:evidence_retrieved
+      metric: EvidenceRetrieved
+    - type: python
+      value: file://assertions.py:citation_correctness
+      metric: CitationCorrectness
+    - type: python
+      value: file://assertions.py:citation_completeness
+      metric: CitationCompleteness
+
+evaluateOptions:
+  maxConcurrency: 1
+

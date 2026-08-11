@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bhagavad-gita-rag-benchmark/gold-example.schema.json",
+  "title": "Bhagavad Gita RAG Benchmark Gold Example",
+  "type": "object",
+  "required": ["query_id", "query", "split", "query_category", "difficulty", "relevance", "provenance"],
+  "properties": {
+    "query_id": {"type": "string", "minLength": 1},
+    "query": {"type": "string", "minLength": 1, "description": "Primarily English; Sanskrit terms may be embedded."},
+    "split": {"enum": ["development", "validation", "test", "diagnostic"]},
+    "dataset_version": {"type": "string"},
+    "query_category": {
+      "enum": ["exact_verse", "verse_meaning", "conceptual", "philosophical", "chapter_level", "entity_person", "sanskrit_terminology", "paraphrase", "indirect_semantic", "multi_hop", "multi_verse", "context_dependent", "commentary_oriented", "confusable_verses", "cross_chapter", "very_short", "long_natural_language"]
+    },
+    "difficulty": {"enum": ["easy", "medium", "hard", "adversarial"]},
+    "expected_chapters": {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 18}, "uniqueItems": true},
+    "expected_verses": {"type": "array", "items": {"type": "string"}},
+    "acceptable_relevant_verses": {"type": "array", "items": {"type": "string"}},
+    "relevance": {
+      "type": "object",
+      "description": "Canonical passage ID to human relevance grade: 0 nonrelevant, 1 marginal, 2 relevant, 3 primary/highly relevant.",
+      "additionalProperties": {"type": "integer", "minimum": 0, "maximum": 3}
+    },
+    "gold_passages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["passage_id", "relevance_grade"],
+        "properties": {
+          "passage_id": {"type": "string"},
+          "relevance_grade": {"type": "integer", "minimum": 0, "maximum": 3},
+          "role": {"enum": ["primary", "secondary", "context", "hard_negative"]},
+          "rationale": {"type": "string"}
+        }
+      }
+    },
+    "hard_negatives": {
+      "type": "array",
+      "items": {"oneOf": [{"type": "string"}, {"type": "object", "required": ["passage_id"], "properties": {"passage_id": {"type": "string"}, "rationale": {"type": "string"}}}]}
+    },
+    "sanskrit_devanagari_reference": {"type": "string"},
+    "iast_reference": {"type": "string"},
+    "english_translation_reference": {"type": "string"},
+    "reference_answer": {"type": "string"},
+    "concepts": {"type": "array", "items": {"type": "string"}},
+    "entities": {"type": "array", "items": {"type": "string"}},
+    "source": {"type": "string"},
+    "provenance": {
+      "type": "object",
+      "required": ["human_verified"],
+      "properties": {
+        "human_verified": {"type": "boolean"},
+        "test_labels_locked": {"type": "boolean"},
+        "contamination_audit": {"enum": ["clean", "contaminated", "not_run"]},
+        "annotators": {"type": "array", "items": {"type": "string"}},
+        "adjudicator": {"type": "string"},
+        "source_url": {"type": "string"},
+        "license": {"type": "string"},
+        "annotation_date": {"type": "string", "format": "date"}
+      }
+    },
+    "annotation_confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "annotations": {
+      "type": "array",
+      "items": {"type": "object", "required": ["annotator_id", "relevance"], "properties": {"annotator_id": {"type": "string"}, "relevance": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0, "maximum": 3}}, "notes": {"type": "string"}}}
+    },
+    "corpus_representation": {"enum": ["devanagari", "iast", "normalized_transliteration", "english_translation", "sanskrit_english_mixed", "commentary", "multilingual_combined", "unknown"]},
+    "retrieval_strategy": {"type": "string"},
+    "representation_group": {"type": "string"},
+    "variant_of": {"type": "string"},
+    "perturbation_type": {"enum": ["", "paraphrase", "synonym", "spelling_mistake", "grammar_error", "informal_english", "concise", "verbose", "transliterated_sanskrit", "alternate_sanskrit_spelling", "terminology_substitution", "ambiguous"]},
+    "ambiguous": {"type": "boolean"},
+    "metadata": {"type": "object"}
+  },
+  "additionalProperties": true
+}

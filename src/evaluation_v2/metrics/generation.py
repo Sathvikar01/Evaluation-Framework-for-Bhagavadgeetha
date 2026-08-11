@@ -30,10 +30,18 @@ def generation_checks(
                 exact_matches.append(ref)
     citation_precision = len(set(valid)) / len(set(citations)) if citations else (1.0 if not expect_citation else 0.0)
     citation_recall = len(set(citations) & gold) / len(gold) if gold else None
-    unsupported_penalty = 1.0 - (len(set(unsupported)) / len(set(citations)) if citations else 0.0)
+    # ``unsupported_penalty`` is a penalty/rate, not another support score.
+    # Previously this was defined as 1 - unsupported_rate, which is exactly
+    # citation precision because every unique citation is either valid or
+    # unsupported.  Keeping the badness-oriented rate makes the field useful
+    # for diagnostics without double-counting precision in the composite.
+    unsupported_penalty = len(set(unsupported)) / len(set(citations)) if citations else 0.0
     empty_or_refusal = not answer.strip() or bool(re.search(r"\b(I don't have|I cannot|unable to answer|no relevant verses)\b", answer, re.I))
     valid_answer = 0.0 if empty_or_refusal else 1.0
-    deterministic_score = (citation_precision + unsupported_penalty + valid_answer) / 3.0 if not (empty_or_refusal and expect_citation) else 0.0
+    score_components = [citation_precision, valid_answer]
+    if citation_recall is not None:
+        score_components.append(citation_recall)
+    deterministic_score = sum(score_components) / len(score_components) if not (empty_or_refusal and expect_citation) else 0.0
     return {
         "citations": citations,
         "valid_citations": valid,
@@ -47,5 +55,8 @@ def generation_checks(
         "sanskrit_or_iast_quote_matches": exact_matches,
         "chapter_verse_consistent": not unsupported,
         "unsupported_penalty": unsupported_penalty,
+        "unsupported_citation_rate": unsupported_penalty,
+        "deterministic_score_version": "v2_precision_recall_valid_answer_mean",
+        "deterministic_score_components": ["citation_precision", "citation_recall", "valid_answer"] if citation_recall is not None else ["citation_precision", "valid_answer"],
         "deterministic_score": deterministic_score,
     }

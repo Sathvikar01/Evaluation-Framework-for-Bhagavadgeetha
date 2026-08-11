@@ -5,6 +5,7 @@ from src.evaluation_v2.metrics.generation import generation_checks
 from src.evaluation_v2.metrics.retrieval import retrieval_metrics, summarize_retrieval
 from src.evaluation_v2.metrics.routing import routing_metrics
 from src.evaluation_v2.metrics.statistics import compare_paired
+from src.evaluation_v2.comparison import load_rows
 from src.evaluation_v2.runner import _refs, stage_analysis
 from src.evaluation_v2.schemas import BenchmarkExample
 
@@ -118,6 +119,63 @@ def test_generation_refusal_zeroes_score():
     )
     assert checks["empty_or_refusal"] is True
     assert checks["deterministic_score"] == 0.0
+
+
+def test_generation_score_uses_recall_once_and_penalty_is_badness_rate():
+    checks = generation_checks(
+        "See BhG 2.47 and BhG 3.1.",
+        retrieved_refs={"BhG 2.47"},
+        gold_refs={"BhG 2.47"},
+    )
+    assert checks["unsupported_penalty"] == 0.5
+    assert checks["citation_recall"] == 1.0
+    assert checks["deterministic_score"] == (0.5 + 1.0 + 1.0) / 3.0
+
+
+def test_late_final_injection_is_success_and_pool_is_traced():
+    example = BenchmarkExample(
+        example_id="late", dataset_name="d", dataset_version="1", split="test",
+        track="without_id_gita_qa", query="q", query_language="en", query_type="qa",
+        gold_verse_refs=("BhG 2.47",),
+    )
+    result = {"intermediate": {
+        "vector_results": [], "graph_results": [], "bm25_results": [],
+        "interpretation_results": [{"verse_ref": "BhG 2.47", "chunk_type": "verse"}],
+        "fused_results": [], "reranked_results": [],
+    }}
+    stage = stage_analysis(example, result, ["BhG 2.47"])
+    assert stage["failure_class"] == "success"
+    assert stage["containment"]["interpretation_results"] is True
+    assert stage["union_pool_containment"] is True
+
+
+def test_pool_containment_is_not_final_rank_containment():
+    metrics = retrieval_metrics(
+        ["BhG 1.1"], ["BhG 2.47"], candidate_pool_refs=["BhG 2.47"], cutoffs=(1,)
+    )
+    assert metrics["candidate_pool_containment"] is True
+    assert metrics["final_rank_containment"] is False
+    assert metrics["recall@1"] == 0.0
+
+
+def test_even_rank_median_is_the_statistical_median():
+    metrics = retrieval_metrics(
+        ["BhG 2.47", "BhG 1.1", "BhG 18.66"],
+        ["BhG 2.47", "BhG 18.66"],
+        cutoffs=(1,),
+    )
+    assert metrics["median_rank"] == 2.0
+
+
+def test_compare_rejects_summary_json(tmp_path):
+    path = tmp_path / "summary.json"
+    path.write_text('{"tracks": {}}', encoding="utf-8")
+    try:
+        load_rows(path)
+    except ValueError as exc:
+        assert "per_query" in str(exc)
+    else:
+        raise AssertionError("summary.json must not be treated as per-query rows")
 
 
 def test_routing_metrics_returns_none_for_zero_valid():

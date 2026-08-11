@@ -11,7 +11,7 @@ paths:
   quick_root: data/evaluation_v2/quick
 
 retrieval:
-  cutoffs: [1, 3, 5, 10, 50]
+  cutoffs: [1, 3, 5, 10, 20, 50]
   use_api: false
 
 generation:
@@ -19,4 +19,3 @@ generation:
 
 judge:
   enabled: false
-

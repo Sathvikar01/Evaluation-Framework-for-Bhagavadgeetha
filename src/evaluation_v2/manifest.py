@@ -27,6 +27,80 @@ def _git(args: list[str], root: Path) -> str:
     except Exception: return ""
 
 
+def _sha256_file(path: Path) -> str:
+    import hashlib
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _artifact_record(root: Path, path: str | Path) -> dict[str, Any] | None:
+    candidate = Path(path)
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    if not candidate.exists() or not candidate.is_file():
+        return None
+    try:
+        display = str(candidate.relative_to(root))
+    except ValueError:
+        display = str(candidate)
+    return {"path": display, "size": candidate.stat().st_size, "sha256": _sha256_file(candidate)}
+
+
+def _configured_artifacts(root: Path, config: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Capture hashes for split, mapping, and index inputs used by a run."""
+    split_hashes: dict[str, Any] = {}
+    evaluation_root = Path(config.get("paths", {}).get("evaluation_root", "data/evaluation_v2"))
+    if not evaluation_root.is_absolute():
+        evaluation_root = root / evaluation_root
+    if evaluation_root.exists():
+        for path in sorted(evaluation_root.rglob("split_manifest.json")):
+            record = _artifact_record(root, path)
+            if record:
+                split_hashes[str(path.relative_to(root))] = record
+
+    mapping_hashes: dict[str, Any] = {}
+    candidates = []
+    for entry in config.get("datasets", {}).values():
+        if isinstance(entry, dict) and entry.get("mapping_path"):
+            candidates.append(entry["mapping_path"])
+    candidates.append(evaluation_root / "gitadb" / "mapping.json")
+    for path in candidates:
+        record = _artifact_record(root, path)
+        if record:
+            mapping_hashes[record["path"]] = record
+
+    production_config = root / "configs/config.yaml"
+    production: dict[str, Any] = {}
+    if production_config.exists():
+        try:
+            import yaml
+            value = yaml.safe_load(production_config.read_text(encoding="utf-8"))
+            production = value if isinstance(value, dict) else {}
+        except Exception:
+            production = {}
+    data_cfg = production.get("data", {}) if isinstance(production.get("data"), dict) else {}
+    embedding_cfg = production.get("embedding", {}) if isinstance(production.get("embedding"), dict) else {}
+    dual_cfg = embedding_cfg.get("dual_index", {}) if isinstance(embedding_cfg.get("dual_index"), dict) else {}
+    index_paths = {
+        "chunks": config.get("paths", {}).get("chunks") or data_cfg.get("chunks_file"),
+        "faiss_index": data_cfg.get("faiss_index"),
+        "faiss_metadata": data_cfg.get("faiss_metadata"),
+        "dual_faiss_index": dual_cfg.get("faiss_index"),
+        "dual_faiss_metadata": dual_cfg.get("faiss_metadata"),
+        "interpretation_index": "data/processed/interpretation_index.json",
+    }
+    index_metadata: dict[str, Any] = {}
+    for name, path in index_paths.items():
+        if path:
+            record = _artifact_record(root, path)
+            if record:
+                index_metadata[name] = record
+    return split_hashes, mapping_hashes, index_metadata
+
+
 def capture_manifest(*, config: dict[str, Any], args: dict[str, Any], repo_root: str | Path = ".", health: dict[str, Any] | None = None, leakage_status: str = "not_run") -> dict[str, Any]:
     root = Path(repo_root)
     production_config = root / "configs/config.yaml"
@@ -35,7 +109,8 @@ def capture_manifest(*, config: dict[str, Any], args: dict[str, Any], repo_root:
     for name in ("numpy", "scipy", "pytest", "pyyaml", "sentence-transformers", "faiss-cpu", "neo4j"):
         try: packages[name] = importlib.metadata.version(name)
         except importlib.metadata.PackageNotFoundError: pass
-    return {"schema_version": SCHEMA_VERSION, "created_utc": datetime.now(timezone.utc).isoformat(), "git": {"sha": _git(["rev-parse", "HEAD"], root), "branch": _git(["branch", "--show-current"], root), "dirty": bool(_git(["status", "--porcelain"], root))}, "cli_args": _json_safe(args), "evaluation_config": _json_safe(config), "production_config_snapshot": config_snapshot, "dataset_versions": {name: value.get("version") for name, value in config.get("datasets", {}).items()}, "split_manifest_hashes": {}, "mapping_artifact_hashes": {}, "index_metadata": {}, "models": {"embedding": "live pipeline config", "reranker": "live pipeline config", "generation": "live pipeline config", "query_expansion": "live pipeline config"}, "runtime": {"python": sys.version, "platform": platform.platform(), "packages": packages}, "random_seeds": {"evaluation": config.get("seed"), "split": config.get("split", {}).get("seed"), "bootstrap": config.get("bootstrap", {}).get("seed")}, "component_health": _json_safe(health or {}), "api_dependent_components_used": {"retrieval_api": bool(config.get("retrieval", {}).get("use_api")), "generation": bool(config.get("generation", {}).get("enabled")), "llm_judge": bool(config.get("judge", {}).get("enabled"))}, "cost": {"estimated": None, "currency": None}, "leakage_audit": {"status": leakage_status, "official": leakage_status == "clean"}}
+    split_hashes, mapping_hashes, index_metadata = _configured_artifacts(root, config)
+    return {"schema_version": SCHEMA_VERSION, "created_utc": datetime.now(timezone.utc).isoformat(), "git": {"sha": _git(["rev-parse", "HEAD"], root), "branch": _git(["branch", "--show-current"], root), "dirty": bool(_git(["status", "--porcelain"], root))}, "cli_args": _json_safe(args), "evaluation_config": _json_safe(config), "production_config_snapshot": config_snapshot, "dataset_versions": {name: value.get("version") for name, value in config.get("datasets", {}).items()}, "split_manifest_hashes": split_hashes, "mapping_artifact_hashes": mapping_hashes, "index_metadata": index_metadata, "models": {"embedding": "live pipeline config", "reranker": "live pipeline config", "generation": "live pipeline config", "query_expansion": "live pipeline config"}, "runtime": {"python": sys.version, "platform": platform.platform(), "packages": packages}, "random_seeds": {"evaluation": config.get("seed"), "split": config.get("split", {}).get("seed"), "bootstrap": config.get("bootstrap", {}).get("seed")}, "component_health": _json_safe(health or {}), "api_dependent_components_used": {"retrieval_api": bool(config.get("retrieval", {}).get("use_api")), "generation": bool(config.get("generation", {}).get("enabled")), "llm_judge": bool(config.get("judge", {}).get("enabled"))}, "cost": {"estimated": None, "currency": None}, "leakage_audit": {"status": leakage_status, "official": leakage_status == "clean"}}
 
 
 def write_manifest(path: str | Path, manifest: dict[str, Any]) -> None:

@@ -48,6 +48,23 @@ def test_verse_group_split_isolated():
     assert not train_refs & test_refs
 
 
+def test_multi_gold_connected_verse_groups_stay_in_one_split():
+    rows = [
+        example("BhG 2.47", "a", "a"),
+        BenchmarkExample(example_id="ab", dataset_name="x", dataset_version="1", split="all", track="without_id_gita_qa", query="ab", query_language="en", query_type="qa", gold_verse_refs=("BhG 2.47", "BhG 3.1")),
+        example("BhG 3.1", "b", "b"),
+        example("BhG 4.1", "c", "c"),
+    ]
+    splits = split_by_verse_group(rows, seed=7, ratios={"train": .5, "validation": .0, "test": .5})
+    locations = {}
+    for split, split_rows in splits.items():
+        for row in split_rows:
+            for ref in row.gold_verse_refs:
+                locations.setdefault(ref, set()).add(split)
+    assert locations["BhG 2.47"] == locations["BhG 3.1"]
+    assert all(len(parts) == 1 for parts in locations.values())
+
+
 def test_bhagavad_adapter_preserves_raw_and_split_manifest(tmp_path):
     source = tmp_path / "qa.jsonl"
     source.write_text("\n".join(json.dumps({"id": i, "question": f"q{i}", "answer": "a", "chapter_no": 2, "verse_no": 47}) for i in range(3)), encoding="utf-8")

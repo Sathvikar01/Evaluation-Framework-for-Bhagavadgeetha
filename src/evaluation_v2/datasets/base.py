@@ -84,4 +84,11 @@ class DatasetAdapter(ABC):
 
     @staticmethod
     def _limit(items: list[BenchmarkExample], max_examples: int | None) -> list[BenchmarkExample]:
-        return items if not max_examples else items[:max_examples]
+        if max_examples is None:
+            return items
+        if max_examples < 0:
+            raise ValueError("max_examples must be non-negative")
+        # Do not let a caller's max_examples turn into a file-order prefix.
+        # Hash ordering is stable across processes and independent of source
+        # row order; CLI sampling adds the configured run seed on top.
+        return sorted(items, key=lambda item: hashlib.sha256(item.example_id.encode("utf-8")).digest())[:max_examples]

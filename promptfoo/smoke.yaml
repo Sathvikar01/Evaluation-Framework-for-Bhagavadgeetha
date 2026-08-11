@@ -1,0 +1,28 @@
+# yaml-language-server: $schema=https://promptfoo.dev/config-schema.json
+description: Offline verification of Bhagavad Gita benchmark assertions
+prompts:
+  - "{{query}}"
+providers:
+  - id: file://mock_provider.py
+tests:
+  - vars:
+      query: "What is disciplined action?"
+      gold_refs: ["BhG 2.47"]
+    assert:
+      - type: python
+        value: file://assertions.py:evidence_retrieved
+      - type: python
+        value: file://assertions.py:citation_correctness
+      - type: python
+        value: file://assertions.py:citation_completeness
+  - vars:
+      query: "What is surrender?"
+      gold_refs: ["BhG 18.66"]
+    assert:
+      - type: python
+        value: file://assertions.py:evidence_retrieved
+      - type: python
+        value: file://assertions.py:citation_correctness
+      - type: python
+        value: file://assertions.py:citation_completeness
+

@@ -44,12 +44,34 @@ def split_by_verse_group(
     examples: list[BenchmarkExample], *, seed: int, ratios: dict[str, float]
 ) -> dict[str, list[BenchmarkExample]]:
     """Split whole normalized verse groups, never individual questions."""
-    groups: dict[tuple[str, ...], list[BenchmarkExample]] = defaultdict(list)
+    # Exact tuple grouping is insufficient for multi-gold rows: [A, B] and
+    # [A] must be in the same split even though their tuples differ. Build
+    # connected components over verse references first, then assign each
+    # component atomically.
+    parent: dict[str, str] = {}
+
+    def find(ref: str) -> str:
+        parent.setdefault(ref, ref)
+        while parent[ref] != ref:
+            parent[ref] = parent[parent[ref]]
+            ref = parent[ref]
+        return ref
+
+    def union(left: str, right: str) -> None:
+        left_root, right_root = find(left), find(right)
+        if left_root != right_root:
+            parent[right_root] = left_root
+
     for example in examples:
-        key = tuple(sorted(example.gold_verse_refs))
-        if not key:
+        refs = list(example.gold_verse_refs)
+        if not refs:
             raise ValueError(f"cannot split unlabeled example {example.example_id}")
-        groups[key].append(example)
+        for ref in refs[1:]:
+            union(refs[0], ref)
+
+    groups: dict[str, list[BenchmarkExample]] = defaultdict(list)
+    for example in examples:
+        groups[find(example.gold_verse_refs[0])].append(example)
     keys = list(groups)
     random.Random(seed).shuffle(keys)
     n = len(keys)
@@ -121,6 +143,14 @@ class BhagavadGitaQAAdapter(DatasetAdapter):
                 self._split_cache = {split: prepared[split] or [] for split in prepared}
             else:
                 self._split_cache = split_by_verse_group(self._normalize(), seed=self.seed, ratios=self.ratios)
+        seen_by_split: dict[str, set[str]] = {}
+        for split, rows in self._split_cache.items():
+            refs = {ref for row in rows for ref in row.gold_verse_refs}
+            for other_split, other_refs in seen_by_split.items():
+                overlap = refs & other_refs
+                if overlap:
+                    raise ValueError(f"verse-group split leakage between {other_split} and {split}: {sorted(overlap)[:5]}")
+            seen_by_split[split] = refs
         manifest = {"seed": self.seed, "dataset": self.name, "version": self.version,
                     "checksum": sha256_file(self.path), "splits": {}}
         for split, rows in self._split_cache.items():

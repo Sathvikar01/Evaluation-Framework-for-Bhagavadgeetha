@@ -79,6 +79,14 @@ class LivePipelineAdapter:
             if isinstance(reranking, dict):
                 reranking["interpretation_score_weight"] = 0.0
                 reranking["interpretation_smoothing_lambda"] = 0.0
+            interpretation = retrieval.setdefault("interpretation", {})
+            if isinstance(interpretation, dict):
+                # The interpretation canonicalizer samples an LLM. Retrieval
+                # evaluation is deterministic by default, so disable this
+                # optional arm unless the caller explicitly opts out of the
+                # adapter's side-effect guard.
+                interpretation["enabled"] = False
+                interpretation["inject"] = False
         # Clear lazy expanders if already constructed.
         for attr in ("_llm_query_expander", "llm_query_expander", "_query_expander", "query_expander"):
             if hasattr(self.pipeline, attr):
@@ -111,7 +119,7 @@ class LivePipelineAdapter:
         elapsed = time.perf_counter() - start
         health = self.health()
         intermediate = result.get("intermediate", {})
-        required = ("vector_results", "graph_results", "bm25_results", "fused_results", "reranked_results")
+        required = ("vector_results", "graph_results", "bm25_results", "interpretation_results", "fused_results", "reranked_results")
         health["stage_observability"] = {key: key in intermediate for key in required}
         health["retrieval_only"] = True
         health["llm_calls_disabled"] = bool(health.get("llm_side_effects_disabled", False))

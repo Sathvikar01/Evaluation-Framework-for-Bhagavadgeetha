@@ -22,7 +22,13 @@ def write_run_report(output_dir: str | Path, summary: dict[str, Any], rows: list
     write_json(output / "summary.json", summary)
     write_jsonl(output / "per_query.jsonl", rows)
     write_jsonl(output / "failures.jsonl", [row for row in rows if row.get("error") or row.get("stages", {}).get("failure_class") not in {None, "success", "not_applicable"}])
-    write_json(output / "stage_analysis.json", {"tracks": summary.get("tracks", {})})
+    write_json(output / "stage_analysis.json", {
+        "tracks": {
+            name: value.get("stage_analysis", {})
+            for name, value in summary.get("tracks", {}).items()
+            if isinstance(value, dict) and "stage_analysis" in value
+        }
+    })
     write_json(output / "latency.json", {name: value.get("latency", {}) for name, value in summary.get("tracks", {}).items() if isinstance(value, dict)})
     if generation_rows is not None:
         write_jsonl(output / "generation_review.jsonl", generation_rows)
