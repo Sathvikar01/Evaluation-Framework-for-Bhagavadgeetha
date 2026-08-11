@@ -1,6 +1,10 @@
-# SansRAG Evaluation V2
+# SansRAG compatibility notes
 
-Evaluation V2 is an isolated, versioned benchmark layer for SansRAG. The historical evaluator under `src/evaluation/` remains unchanged so its baselines and CLI stay comparable. V2 uses the live `SRAGGraphPipeline.query` path and records stage outputs, component health, latency, leakage status, and reproducibility metadata.
+This document describes the legacy SansRAG adapter retained for compatibility. The public repository's primary supported interface is the standalone, model-agnostic universal benchmark documented in the root [README](../README.md). The historical evaluator under `src/evaluation/` is not part of this repository.
+
+The SansRAG compatibility commands below require a checkout of the SansRAG application, its production data, and its runtime dependencies. They are reference commands for integrating this evaluation layer with that application; they are not expected to run from this standalone repository by themselves. Universal Python, HTTP, command, and replay adapters should use the commands in the root README instead.
+
+Evaluation V2 uses the live `SRAGGraphPipeline.query` path when connected to SansRAG and records stage outputs, component health, latency, leakage status, and reproducibility metadata.
 
 ## Tracks
 

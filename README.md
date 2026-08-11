@@ -28,6 +28,24 @@ Passage identity is canonicalized across `BG 2:47`, `Bhagavad Gita 2.47`, Devana
 
 ## Quick start: any RAG system
 
+### Install
+
+The framework requires Python 3.10 or newer. From the repository root:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+```
+
+Install test dependencies as well when developing the framework:
+
+```powershell
+python -m pip install -r requirements-dev.txt
+```
+
+Promptfoo is optional and is used only for the supplementary generation/citation checks described below.
+
 ```powershell
 python -m src.evaluation_v2 audit-benchmark data/evaluation_v2/universal/starter_development.jsonl
 
@@ -77,7 +95,7 @@ python -m src.evaluation_v2 ablation `
   --output results/ablation
 ```
 
-See [benchmark methodology](docs/benchmark_methodology.md), [annotation protocol](docs/annotation_protocol.md), [requirements compliance](docs/compliance_matrix.md), and [SansRAG compatibility notes](docs/evaluation_v2.md).
+See [benchmark methodology](docs/benchmark_methodology.md), [annotation protocol](docs/annotation_protocol.md), [requirements compliance](docs/compliance_matrix.md), and [SansRAG compatibility notes](docs/evaluation_v2.md). The compatibility notes describe the legacy adapter; the universal benchmark above is the standalone supported path in this repository.
 
 ## Verification
 
